@@ -93,13 +93,13 @@ namespace mt {
 		ThreadPool& operator=(ThreadPool&&) = delete;
 		virtual ~ThreadPool() {}
 
-		void ThreadPool::Init() {
+		void Init() {
 			for (int i = 0; i < m_Threads.size(); ++i) {
 				m_Threads.at(i) = std::thread(ThreadWorker(this, i));
 			}
 		}
 
-		void ThreadPool::Release() {
+		void Release() {
 			m_bShutdown = true;
 			m_Condition.notify_all();
 
