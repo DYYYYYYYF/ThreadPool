@@ -41,7 +41,10 @@ int main(int argc, char* argv[]) {
 	std::cout << "main thread id: " << std::this_thread::get_id() << std::endl;
 	std::cout << "Used time: " << end_tick - begin_tick << std::endl;
 
+#ifdef _WIN32
 	system("PAUSE");
+#endif
+
 
 	return 0;
 }
