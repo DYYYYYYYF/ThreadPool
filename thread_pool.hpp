@@ -7,6 +7,7 @@
 #include <functional>
 #include <mutex>
 #include <utility>
+#include <atomic>
 #include <condition_variable>
 
 namespace mt {
@@ -85,8 +86,8 @@ namespace mt {
 
 	// Thread Pool
 	public:
-		ThreadPool() : m_Threads(std::vector<std::thread>(std::thread::hardware_concurrency())), m_bShutdown(false) {}
-		ThreadPool(const int thread_count) : m_Threads(std::vector<std::thread>(thread_count)), m_bShutdown(false) {}
+		ThreadPool() : m_Threads(std::vector<std::thread>(std::thread::hardware_concurrency())), m_bShutdown(false), is_initialized(false){}
+		ThreadPool(const int thread_count) : m_Threads(std::vector<std::thread>(thread_count)), m_bShutdown(false), is_initialized(false) {}
 		ThreadPool(const ThreadPool&) = delete;
 		ThreadPool(ThreadPool&&) = delete;
 		ThreadPool& operator=(const ThreadPool&) = delete;
@@ -94,12 +95,17 @@ namespace mt {
 		virtual ~ThreadPool() {}
 
 		void Init() {
+			if (is_initialized) {
+				return;
+			}
+
 			for (int i = 0; i < m_Threads.size(); ++i) {
 				m_Threads.at(i) = std::thread(ThreadWorker(this, i));
 			}
+			is_initialized = true;
 		}
 
-		void Release() {
+		void Shutdown() {
 			m_bShutdown = true;
 			m_Condition.notify_all();
 
@@ -108,23 +114,34 @@ namespace mt {
 					m_Threads.at(i).join();
 				}
 			}
+			is_initialized = false;
 		}
 
-		template <typename Func, typename ... Args>
-		auto Commit(Func&& func, Args&&... args) -> std::future<decltype(func(args...))> {
-			std::function<decltype(func(args...))()> tempFunc = std::bind(std::forward<Func>(func), std::forward<Args>(args)...);
-			auto pTask = std::make_shared<std::packaged_task<decltype(func(args...))()>>(tempFunc);
-			std::function<void()> newTask = [pTask]() {
-				(*pTask)();
-			};
+		template <typename Func, typename... Args>
+		auto Commit(Func&& func, Args&&... args)
+			-> std::future<decltype(std::invoke(std::forward<Func>(func), std::forward<Args>(args)...))>
+		{
+			using ReturnType = decltype(std::invoke(std::forward<Func>(func), std::forward<Args>(args)...));
+			auto task = std::make_shared<std::packaged_task<ReturnType()>>(
+				[func = std::forward<Func>(func),
+				args = std::make_tuple(std::forward<Args>(args)...)]() mutable {
+					return std::apply([&func](auto&&... args) {
+						return std::invoke(func, std::forward<decltype(args)>(args)...);
+						}, std::move(args));
+				});
+
+			std::function<void()> newTask = [task]() {
+				(*task)();
+				};
 
 			m_Tasks.Enqueue(newTask);
 			m_Condition.notify_one();
-			return pTask->get_future();
+			return task->get_future();
 		}
 
 	
 	private:
+		bool is_initialized;
 		std::vector<std::thread> m_Threads;
 		TaskQueue<std::function<void()>> m_Tasks;
 		std::mutex m_Mutex;
